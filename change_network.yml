@@ -4,6 +4,7 @@
   gather_facts: true
   become: yes
   become_method: sudo
+  become_user: root
   vars:
     target_interface: "{{ target_interface }}"
     new_ip_address: "{{ new_ip_address }}"
@@ -22,68 +23,18 @@
       debug:
         var: current_network.stdout
 
-    - name: Create backup of current interfaces file in /tmp
-      copy:
-        src: /etc/network/interfaces
-        dest: "/tmp/interfaces.backup.before"
-        remote_src: yes
+    - name: Create backup of current interfaces file
+      command: cp /etc/network/interfaces /tmp/interfaces.backup.{{ ansible_date_time.epoch }}
+      args:
+        creates: "/tmp/interfaces.backup.{{ ansible_date_time.epoch }}"
+
+    - name: Create new interfaces configuration using template
+      template:
+        src: interfaces.j2
+        dest: /etc/network/interfaces
         mode: '0644'
-
-    - name: Add new network configuration using lineinfile
-      block:
-        - name: Ensure auto interface line exists
-          lineinfile:
-            path: /etc/network/interfaces
-            line: "auto {{ target_interface }}"
-            state: present
-            backup: no
-
-        - name: Add static IP configuration
-          lineinfile:
-            path: /etc/network/interfaces
-            line: "iface {{ target_interface }} inet static"
-            insertafter: "auto {{ target_interface }}"
-            state: present
-            backup: no
-
-        - name: Add IP address
-          lineinfile:
-            path: /etc/network/interfaces
-            line: "  address {{ new_ip_address }}/{{ subnet_prefix }}"
-            insertafter: "iface {{ target_interface }} inet static"
-            state: present
-            backup: no
-
-        - name: Add gateway
-          lineinfile:
-            path: /etc/network/interfaces
-            line: "  gateway {{ gateway }}"
-            insertafter: "  address {{ new_ip_address }}/{{ subnet_prefix }}"
-            state: present
-            backup: no
-
-        - name: Add DNS servers
-          lineinfile:
-            path: /etc/network/interfaces
-            line: "  dns-nameservers {{ dns_servers }}"
-            insertafter: "  gateway {{ gateway }}"
-            state: present
-            backup: no
-
-        - name: Add DNS domain
-          lineinfile:
-            path: /etc/network/interfaces
-            line: "  dns-search {{ dns_domain }}"
-            insertafter: "  dns-nameservers {{ dns_servers }}"
-            state: present
-            backup: no
-
-    - name: Create manual backup of new configuration in /tmp
-      copy:
-        src: /etc/network/interfaces
-        dest: "/tmp/interfaces.after"
-        remote_src: yes
-        mode: '0644'
+        backup: yes
+        validate: 'ifup -n -s %s'
 
     - name: Show new configuration
       command: cat /etc/network/interfaces
@@ -93,16 +44,6 @@
     - name: Display new configuration
       debug:
         var: new_config.stdout
-
-    - name: Test network configuration syntax
-      command: ifup -n {{ target_interface }}
-      register: config_test
-      changed_when: false
-      ignore_errors: yes
-
-    - name: Display configuration test results
-      debug:
-        var: config_test.stdout
 
     - name: Restart networking service
       systemd:
@@ -130,3 +71,11 @@
         timeout: 30
       connection: local
       delegate_to: localhost
+
+    - name: Verify new IP address
+      command: ip addr show {{ target_interface }}
+      register: new_network_config
+
+    - name: Display new network configuration
+      debug:
+        msg: "New network configuration: {{ new_network_config.stdout }}"
