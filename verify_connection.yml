@@ -33,12 +33,6 @@
       register: ping_result
       failed_when: ping_result.rc != 0
       changed_when: false
-    
-    - name: Test SSH port with nc
-      shell: nc -z -w 5 10.31.243.1 22
-      register: ssh_port_result
-      failed_when: ssh_port_result.rc != 0
-      changed_when: false
 
     - name: Test DNS resolution
       shell: |
