@@ -1,21 +1,39 @@
 ---
-- name: Verify connection with new IP
+- name: Verify network configuration
   hosts: all
   gather_facts: true
-  
+  become: yes
+  vars:
+    target_interface: "{{ target_interface }}"
+    expected_ip: "{{ new_ip_address }}"
+
   tasks:
-    - name: Display system information
+    - name: Get current IP address
+      shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
+      register: current_ip
+      changed_when: false
+
+    - name: Verify IP address
       debug:
         msg: |
-          Hostname: {{ ansible_hostname }}
-          IP Address: {{ ansible_default_ipv4.address }}
-          Connection successful!
+          NETWORK CONFIGURATION VERIFICATION
+          ==================================
+          Expected IP: {{ expected_ip }}
+          Actual IP: {{ current_ip.stdout }}
+          Status: {{ "SUCCESS" if expected_ip == current_ip.stdout else "FAILED" }}
 
     - name: Test network connectivity
-      command: ping -c 3 8.8.8.8
-      register: ping_result
-      become: yes
+      wait_for:
+        host: "{{ gateway }}"
+        port: 22
+        timeout: 30
+      delegate_to: localhost
 
-    - name: Display ping results
+    - name: Verify DNS resolution
+      shell: nslookup google.com
+      register: dns_test
+      changed_when: false
+
+    - name: Display DNS test result
       debug:
-        var: ping_result.stdout
+        var: dns_test.stdout
