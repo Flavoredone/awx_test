@@ -31,11 +31,11 @@
         mode: '0755'
       become: true
     
-    - name: Get current hostname
-      command: hostname -f
-      register: current_hostname
-      changed_when: false
-      ignore_errors: true
+    # - name: Get current hostname
+    #   command: hostname -f
+    #   register: current_hostname
+    #   changed_when: false
+    #   ignore_errors: true
     
     - name: Get current hostname (fallback)
       command: hostname
