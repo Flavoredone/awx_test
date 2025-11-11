@@ -1,9 +1,8 @@
 ---
-- name: Change network configuration using systemd-networkd
+- name: Create complete network configuration files
   hosts: all
   gather_facts: true
   become: yes
-  become_method: sudo
   vars:
     target_interface: "{{ target_interface }}"
     new_ip_address: "{{ new_ip_address }}"
@@ -13,71 +12,229 @@
     dns_domain: "{{ dns_domain }}"
 
   tasks:
-    - name: Check if systemd-networkd is available
-      command: systemctl status systemd-networkd
-      register: networkd_status
-      ignore_errors: yes
+    - name: Gather current network information
+      shell: |
+        echo "=== Current Network Configuration ==="
+        echo "Hostname: $(hostname)"
+        echo "Interface: {{ target_interface }}"
+        ip -4 addr show {{ target_interface }} 2>/dev/null || echo "Interface not found"
+        echo "--- Routing ---"
+        ip route show 2>/dev/null || echo "No routing info"
+        echo "--- DNS ---"
+        cat /etc/resolv.conf 2>/dev/null || echo "No resolv.conf"
+      register: current_network
       changed_when: false
 
-    - name: Get current IP
-      shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
-      register: current_ip
-      changed_when: false
-
-    - name: Show current IP
+    - name: Display current network status
       debug:
-        msg: "Current IP: {{ current_ip.stdout }}"
+        var: current_network.stdout
 
-    - name: Create systemd network configuration
+    - name: Create main configuration script
+      copy:
+        content: |
+          #!/bin/bash
+          # Network Configuration Script
+          # Interface: {{ target_interface }}
+          # New IP: {{ new_ip_address }}/{{ subnet_prefix }}
+          
+          set -e
+          
+          echo "=== Applying Network Configuration ==="
+          echo "Target: {{ target_interface }} -> {{ new_ip_address }}"
+          
+          # Create backup
+          BACKUP_FILE="/etc/network/interfaces.backup.$(date +%Y%m%d_%H%M%S)"
+          echo "1. Creating backup: $BACKUP_FILE"
+          cp /etc/network/interfaces "$BACKUP_FILE"
+          
+          # Apply new configuration
+          echo "2. Applying new configuration..."
+          cat > /etc/network/interfaces << 'EOF'
+          # Ansible managed - Network Configuration
+          # Applied: $(date)
+          
+          auto lo
+          iface lo inet loopback
+          
+          auto {{ target_interface }}
+          iface {{ target_interface }} inet static
+            address {{ new_ip_address }}/{{ subnet_prefix }}
+            gateway {{ gateway }}
+            dns-nameservers {{ dns_servers }}
+            dns-search {{ dns_domain }}
+          EOF
+          
+          echo "3. Restarting networking service..."
+          systemctl restart networking
+          
+          echo "4. Waiting for network stabilization..."
+          sleep 15
+          
+          echo "5. Verifying configuration..."
+          NEW_IP=$(ip -4 addr show {{ target_interface }} 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+          echo "Current IP: $NEW_IP"
+          
+          if [ "$NEW_IP" = "{{ new_ip_address }}" ]; then
+            echo "✅ SUCCESS: Configuration applied successfully!"
+          else
+            echo "⚠️  WARNING: IP verification failed"
+            echo "Expected: {{ new_ip_address }}, Got: $NEW_IP"
+          fi
+        dest: /tmp/apply_network.sh
+        mode: '0755'
+
+    - name: Create systemd-networkd configuration
       copy:
         content: |
           [Match]
           Name={{ target_interface }}
-
+          
           [Network]
           Address={{ new_ip_address }}/{{ subnet_prefix }}
           Gateway={{ gateway }}
           DNS={{ dns_servers }}
           Domains={{ dns_domain }}
         dest: /tmp/{{ target_interface }}.network
-        mode: '0644'
 
-    - name: Try to apply systemd-networkd configuration
-      block:
-        - name: Stop traditional networking
-          systemd:
-            name: networking
-            state: stopped
-          ignore_errors: yes
+    - name: Create netplan configuration
+      copy:
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              {{ target_interface }}:
+                dhcp4: no
+                addresses:
+                  - {{ new_ip_address }}/{{ subnet_prefix }}
+                routes:
+                  - to: default
+                    via: {{ gateway }}
+                nameservers:
+                  addresses: [{{ dns_servers }}]
+                  search: [{{ dns_domain }}]
+        dest: /tmp/01-netplan-config.yaml
 
-        - name: Enable and start systemd-networkd
-          systemd:
-            name: systemd-networkd
-            state: started
-            enabled: yes
-          ignore_errors: yes
+    - name: Create emergency rollback script
+      copy:
+        content: |
+          #!/bin/bash
+          # Network Rollback Script
+          
+          echo "=== Network Rollback ==="
+          LATEST_BACKUP=$(ls -t /etc/network/interfaces.backup.* 2>/dev/null | head -1)
+          
+          if [ -n "$LATEST_BACKUP" ]; then
+            echo "Restoring from: $LATEST_BACKUP"
+            cp "$LATEST_BACKUP" /etc/network/interfaces
+            systemctl restart networking
+            echo "✅ Rollback completed"
+          else
+            echo "❌ No backup found! Manual recovery needed."
+            echo "Try: systemctl restart networking"
+          fi
+        dest: /tmp/rollback_network.sh
+        mode: '0755'
 
-        - name: Copy network configuration
-          shell: |
-            cp /tmp/{{ target_interface }}.network /etc/systemd/network/
-            systemctl restart systemd-networkd
+    - name: Create connection test script
+      copy:
+        content: |
+          #!/bin/bash
+          # Connection Test Script
+          
+          echo "=== Testing Network Connectivity ==="
+          echo "Interface: {{ target_interface }}"
+          echo "Expected IP: {{ new_ip_address }}"
+          
+          # Check current IP
+          CURRENT_IP=$(ip -4 addr show {{ target_interface }} 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+          echo "Current IP: $CURRENT_IP"
+          
+          # Test connectivity
+          echo "Testing gateway connectivity..."
+          ping -c 2 -W 1 {{ gateway }} >/dev/null 2>&1 && echo "✅ Gateway reachable" || echo "❌ Gateway unreachable"
+          
+          echo "Testing internet connectivity..."
+          ping -c 2 -W 1 8.8.8.8 >/dev/null 2>&1 && echo "✅ Internet reachable" || echo "❌ Internet unreachable"
+          
+          echo "Testing DNS resolution..."
+          nslookup google.com {{ dns_servers }} >/dev/null 2>&1 && echo "✅ DNS working" || echo "❌ DNS failing"
+        dest: /tmp/test_network.sh
+        mode: '0755'
 
-      when: networkd_status.rc == 0
-      ignore_errors: yes
+    - name: Create comprehensive instructions
+      copy:
+        content: |
+          NETWORK CONFIGURATION INSTRUCTIONS
+          ==================================
+          
+          Host: {{ ansible_hostname }} ({{ ansible_host }})
+          Interface: {{ target_interface }}
+          New IP: {{ new_ip_address }}/{{ subnet_prefix }}
+          Gateway: {{ gateway }}
+          DNS: {{ dns_servers }}
+          Domain: {{ dns_domain }}
+          
+          METHOD 1: Traditional Networking (Recommended)
+          --------------------------------------------
+          1. Connect via SSH: ssh {{ ansible_user }}@{{ ansible_host }}
+          2. Become root: sudo -i
+          3. Run: /tmp/apply_network.sh
+          
+          METHOD 2: systemd-networkd
+          --------------------------
+          1. Enable systemd-networkd:
+             systemctl enable systemd-networkd
+          2. Copy config: cp /tmp/{{ target_interface }}.network /etc/systemd/network/
+          3. Apply: systemctl restart systemd-networkd
+          4. Disable old networking: systemctl stop networking
+          
+          METHOD 3: Netplan
+          -----------------
+          1. Copy config: cp /tmp/01-netplan-config.yaml /etc/netplan/
+          2. Apply: netplan apply
+          
+          VERIFICATION:
+          -------------
+          1. Run: /tmp/test_network.sh
+          2. Check IP: ip addr show {{ target_interface }}
+          3. Test SSH: ssh {{ ansible_user }}@{{ new_ip_address }}
+          
+          ROLLBACK:
+          ---------
+          If something goes wrong: /tmp/rollback_network.sh
+          
+          FILES CREATED:
+          --------------
+          /tmp/apply_network.sh      - Main configuration script
+          /tmp/rollback_network.sh   - Emergency rollback
+          /tmp/test_network.sh       - Connectivity test
+          /tmp/{{ target_interface }}.network    - systemd-networkd config
+          /tmp/01-netplan-config.yaml - Netplan config
+        dest: /tmp/INSTRUCTIONS.txt
 
-    - name: Wait for network changes
-      pause:
-        seconds: 10
-
-    - name: Check new IP
-      shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
-      register: new_ip
-      changed_when: false
-
-    - name: Display result
+    - name: Display final summary
       debug:
         msg: |
-          Network configuration attempt completed.
-          Old IP: {{ current_ip.stdout }}
-          Current IP: {{ new_ip.stdout }}
-          Change successful: {{ new_ip_address == new_ip.stdout }}
+          🎯 NETWORK CONFIGURATION FILES READY
+          ===================================
+          
+          All configuration files have been created in /tmp/
+          
+          📋 Next Steps:
+          1. SSH to the host: ssh {{ ansible_user }}@{{ ansible_host }}
+          2. Become root: sudo -i  
+          3. Run the main script: /tmp/apply_network.sh
+          4. Verify with: /tmp/test_network.sh
+          
+          🔧 Available scripts:
+          • /tmp/apply_network.sh     - Apply configuration
+          • /tmp/rollback_network.sh  - Emergency rollback
+          • /tmp/test_network.sh      - Test connectivity
+          
+          📄 Configuration files:
+          • /tmp/{{ target_interface }}.network    - systemd-networkd
+          • /tmp/01-netplan-config.yaml - Netplan
+          • /tmp/INSTRUCTIONS.txt      - Full instructions
+          
+          After manual configuration, use new IP {{ new_ip_address }} in inventory.
