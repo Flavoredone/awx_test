@@ -1,5 +1,5 @@
 ---
-- name: Change network configuration using temporary IP commands
+- name: Change network configuration using systemd-networkd
   hosts: all
   gather_facts: true
   become: yes
@@ -13,92 +13,71 @@
     dns_domain: "{{ dns_domain }}"
 
   tasks:
-    - name: Get current IP address
+    - name: Check if systemd-networkd is available
+      command: systemctl status systemd-networkd
+      register: networkd_status
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Get current IP
       shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
       register: current_ip
       changed_when: false
 
-    - name: Display current IP
+    - name: Show current IP
       debug:
         msg: "Current IP: {{ current_ip.stdout }}"
 
-    - name: Flush existing IP addresses from interface
-      shell: ip addr flush dev {{ target_interface }}
-      ignore_errors: yes
-
-    - name: Add new IP address temporarily
-      shell: ip addr add {{ new_ip_address }}/{{ subnet_prefix }} dev {{ target_interface }}
-
-    - name: Bring interface up
-      shell: ip link set {{ target_interface }} up
-
-    - name: Add default gateway
-      shell: ip route add default via {{ gateway }} dev {{ target_interface }}
-      ignore_errors: yes
-
-    - name: Update DNS resolv.conf temporarily
-      shell: |
-        echo "nameserver {{ dns_servers }}" > /tmp/resolv.conf.new
-        echo "search {{ dns_domain }}" >> /tmp/resolv.conf.new
-        cp /tmp/resolv.conf.new /etc/resolv.conf
-      ignore_errors: yes
-
-    - name: Verify temporary IP change
-      shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
-      register: temp_ip
-      changed_when: false
-
-    - name: Display temporary IP
-      debug:
-        msg: "Temporary IP set to: {{ temp_ip.stdout }}"
-
-    - name: Test connectivity with new IP
-      command: ping -c 2 -W 1 8.8.8.8
-      register: ping_test
-      ignore_errors: yes
-
-    - name: Display connectivity test
-      debug:
-        msg: "Connectivity test: {{ 'SUCCESS' if ping_test.rc == 0 else 'FAILED' }}"
-
-    - name: Create persistent configuration script for manual application
+    - name: Create systemd network configuration
       copy:
         content: |
-          #!/bin/bash
-          # Persistent network configuration script
-          # Run this manually after temporary change is verified
-          
-          # Backup current configuration
-          cp /etc/network/interfaces /etc/network/interfaces.backup.$(date +%s)
-          
-          # Create new configuration
-          cat > /etc/network/interfaces << EOF
-          # Ansible managed - Persistent configuration
-          auto lo
-          iface lo inet loopback
+          [Match]
+          Name={{ target_interface }}
 
-          auto {{ target_interface }}
-          iface {{ target_interface }} inet static
-            address {{ new_ip_address }}/{{ subnet_prefix }}
-            gateway {{ gateway }}
-            dns-nameservers {{ dns_servers }}
-            dns-search {{ dns_domain }}
-          EOF
-          
-          echo "Persistent configuration script created. Run manually if temporary change works."
-        dest: /tmp/apply_persistent_network.sh
-        mode: '0755'
+          [Network]
+          Address={{ new_ip_address }}/{{ subnet_prefix }}
+          Gateway={{ gateway }}
+          DNS={{ dns_servers }}
+          Domains={{ dns_domain }}
+        dest: /tmp/{{ target_interface }}.network
+        mode: '0644'
 
-    - name: Important notice
+    - name: Try to apply systemd-networkd configuration
+      block:
+        - name: Stop traditional networking
+          systemd:
+            name: networking
+            state: stopped
+          ignore_errors: yes
+
+        - name: Enable and start systemd-networkd
+          systemd:
+            name: systemd-networkd
+            state: started
+            enabled: yes
+          ignore_errors: yes
+
+        - name: Copy network configuration
+          shell: |
+            cp /tmp/{{ target_interface }}.network /etc/systemd/network/
+            systemctl restart systemd-networkd
+
+      when: networkd_status.rc == 0
+      ignore_errors: yes
+
+    - name: Wait for network changes
+      pause:
+        seconds: 10
+
+    - name: Check new IP
+      shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
+      register: new_ip
+      changed_when: false
+
+    - name: Display result
       debug:
         msg: |
-          TEMPORARY NETWORK CHANGE APPLIED!
-          ================================
+          Network configuration attempt completed.
           Old IP: {{ current_ip.stdout }}
-          Temporary IP: {{ temp_ip.stdout }}
-          
-          This change will be lost after reboot.
-          To make it persistent, you need to manually update /etc/network/interfaces
-          or run /tmp/apply_persistent_network.sh with root privileges.
-          
-          Use new inventory with IP: {{ new_ip_address }} for verification.
+          Current IP: {{ new_ip.stdout }}
+          Change successful: {{ new_ip_address == new_ip.stdout }}
