@@ -3,6 +3,8 @@
   hosts: all
   gather_facts: true
   become: yes
+  become_method: sudo
+  become_user: root
   vars:
     target_interface: "{{ target_interface }}"
     expected_ip: "{{ new_ip_address }}"
