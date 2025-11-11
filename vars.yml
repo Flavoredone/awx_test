@@ -1,0 +1,22 @@
+# change_network.yml
+
+target_interface: ens192
+new_ip_address: 10.31.243.95
+gateway: 10.31.243.1
+subnet_prefix: '24'
+dns_servers: 10.31.137.2
+dns_domain: cloud.lab
+
+# verify_connection.yml
+
+target_interface: ens192
+new_ip_address: 10.31.243.97
+expected_ip: 10.31.243.97
+gateway: 10.31.243.1
+dns_servers: 10.31.137.2
+dns_domain: cloud.lab
+
+# change_hostname.yml
+
+new_hostname: "new-vm-hostname"
+backup_dir: "/tmp/backups"
