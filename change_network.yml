@@ -22,14 +22,20 @@
       debug:
         var: current_network.stdout
 
-    - name: Create backup of current network configuration
+    - name: Create backup of current interfaces file in /tmp
       copy:
         src: /etc/network/interfaces
         dest: "/tmp/interfaces.backup.{{ ansible_date_time.epoch }}"
         remote_src: yes
         mode: '0644'
 
-    - name: Create new network configuration
+    - name: Remove existing configuration for target interface
+      blockinfile:
+        path: /etc/network/interfaces
+        marker: "# {mark} ANSIBLE MANAGED BLOCK {{ target_interface }}"
+        state: absent
+
+    - name: Add new network configuration
       blockinfile:
         path: /etc/network/interfaces
         block: |
@@ -41,7 +47,13 @@
             dns-search {{ dns_domain }}
         marker: "# {mark} ANSIBLE MANAGED BLOCK {{ target_interface }}"
         backup: yes
-        backup_dir: /tmp
+
+    - name: Create manual backup of new configuration in /tmp
+      copy:
+        src: /etc/network/interfaces
+        dest: "/tmp/interfaces.new.{{ ansible_date_time.epoch }}"
+        remote_src: yes
+        mode: '0644'
 
     - name: Show new configuration
       command: cat /etc/network/interfaces
@@ -70,11 +82,11 @@
       poll: 0
       ignore_errors: yes
 
-    - name: Wait for reconnection with new IP (60 seconds)
+    - name: Wait for reconnection with new IP (90 seconds)
       wait_for_connection:
         host: "{{ new_ip_address }}"
         port: 22
-        timeout: 60
+        timeout: 90
         delay: 10
         sleep: 5
       connection: local
