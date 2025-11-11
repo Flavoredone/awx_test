@@ -1,7 +1,7 @@
 ---
 - name: Change VM Hostname
   hosts: "{{ target_hosts | default('all') }}"
-  # Убрано become: true - будем работать без повышения прав
+  become: true
 
   tasks:
     - name: Validate new hostname parameter
@@ -18,12 +18,16 @@
       meta: end_play
       when: current_hostname.stdout == new_hostname
 
-    - name: Update /etc/hostname file using sudo in command
-      command: sudo sh -c "echo '{{ new_hostname }}' > /etc/hostname"
-      changed_when: true
+    - name: Update /etc/hostname file
+      copy:
+        content: "{{ new_hostname }}\n"
+        dest: /etc/hostname
+        owner: root
+        group: root
+        mode: '0644'
 
-    - name: Set hostname temporarily using sudo
-      command: sudo hostname "{{ new_hostname }}"
+    - name: Set hostname via sysctl
+      command: sysctl -w kernel.hostname="{{ new_hostname }}"
       changed_when: true
 
     - name: Verify hostname change
