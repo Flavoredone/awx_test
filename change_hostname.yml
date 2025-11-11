@@ -37,11 +37,11 @@
     #   changed_when: false
     #   ignore_errors: true
     
-    - name: Get current hostname (fallback)
-      command: hostname
-      register: current_hostname_fallback
-      changed_when: false
-      when: current_hostname.rc != 0
+    # - name: Get current hostname (fallback)
+    #   command: hostname
+    #   register: current_hostname_fallback
+    #   changed_when: false
+    #   when: current_hostname.rc != 0
     
     - name: Set actual current hostname fact
       set_fact:
