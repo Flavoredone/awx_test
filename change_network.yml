@@ -29,18 +29,6 @@
         remote_src: yes
         mode: '0644'
 
-    - name: Read current interfaces file
-      slurp:
-        src: /etc/network/interfaces
-      register: interfaces_content
-
-    - name: Remove existing configuration for target interface using replace
-      replace:
-        path: /etc/network/interfaces
-        regex: '^auto {{ target_interface }}\niface {{ target_interface }}.*?(?=\n\S|\n*$)'
-        replace: ''
-      when: '"auto " + target_interface in interfaces_content.content | b64decode'
-
     - name: Add new network configuration using lineinfile
       block:
         - name: Ensure auto interface line exists
@@ -48,6 +36,7 @@
             path: /etc/network/interfaces
             line: "auto {{ target_interface }}"
             state: present
+            backup: no
 
         - name: Add static IP configuration
           lineinfile:
@@ -55,6 +44,7 @@
             line: "iface {{ target_interface }} inet static"
             insertafter: "auto {{ target_interface }}"
             state: present
+            backup: no
 
         - name: Add IP address
           lineinfile:
@@ -62,6 +52,7 @@
             line: "  address {{ new_ip_address }}/{{ subnet_prefix }}"
             insertafter: "iface {{ target_interface }} inet static"
             state: present
+            backup: no
 
         - name: Add gateway
           lineinfile:
@@ -69,6 +60,7 @@
             line: "  gateway {{ gateway }}"
             insertafter: "  address {{ new_ip_address }}/{{ subnet_prefix }}"
             state: present
+            backup: no
 
         - name: Add DNS servers
           lineinfile:
@@ -76,6 +68,7 @@
             line: "  dns-nameservers {{ dns_servers }}"
             insertafter: "  gateway {{ gateway }}"
             state: present
+            backup: no
 
         - name: Add DNS domain
           lineinfile:
@@ -83,6 +76,7 @@
             line: "  dns-search {{ dns_domain }}"
             insertafter: "  dns-nameservers {{ dns_servers }}"
             state: present
+            backup: no
 
     - name: Create manual backup of new configuration in /tmp
       copy:
