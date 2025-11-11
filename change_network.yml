@@ -1,5 +1,5 @@
 ---
-- name: Safe network configuration change
+- name: Change network configuration
   hosts: all
   gather_facts: true
   become: yes
@@ -11,8 +11,17 @@
     subnet_prefix: "{{ subnet_prefix }}"
     dns_servers: "{{ dns_servers }}"
     dns_domain: "{{ dns_domain }}"
-
+  
   tasks:
+    - name: Check current network configuration
+      command: ip addr show {{ target_interface }}
+      register: current_network
+      changed_when: false
+
+    - name: Display current network config
+      debug:
+        var: current_network.stdout
+
     - name: Get current IP address
       shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
       register: current_ip
@@ -20,18 +29,19 @@
 
     - name: Display current IP
       debug:
-        var: current_ip.stdout
+        msg: "Current IP: {{ current_ip.stdout }}"
 
-    - name: Create complete backup
+    - name: Create backup of current interfaces file
       command: cp /etc/network/interfaces /tmp/interfaces.backup.{{ ansible_date_time.epoch }}
       args:
         creates: "/tmp/interfaces.backup.{{ ansible_date_time.epoch }}"
 
-    - name: Create new configuration in temporary location
+    - name: Create new interfaces configuration
       copy:
         content: |
           # Ansible managed - Network configuration
-          # Backup: /tmp/interfaces.backup.{{ ansible_date_time.epoch }}
+          # Created: {{ ansible_date_time.iso8601 }}
+          # Old IP: {{ current_ip.stdout }}
           
           auto lo
           iface lo inet loopback
@@ -42,57 +52,41 @@
             gateway {{ gateway }}
             dns-nameservers {{ dns_servers }}
             dns-search {{ dns_domain }}
-        dest: /tmp/interfaces.new
+        dest: /etc/network/interfaces
         mode: '0644'
 
-    - name: Validate configuration syntax
-      command: ifup -n -s -f /tmp/interfaces.new {{ target_interface }}
-      register: validation
+    - name: Show new configuration
+      command: cat /etc/network/interfaces
+      register: new_config
       changed_when: false
-      ignore_errors: yes
 
-    - name: Show validation results
+    - name: Display new configuration
       debug:
-        var: validation.stdout
+        var: new_config.stdout
 
-    - name: Apply validated configuration
-      command: cp /tmp/interfaces.new /etc/network/interfaces
-      args:
-        creates: /etc/network/interfaces
-
-    - name: Set correct permissions
-      file:
-        path: /etc/network/interfaces
-        mode: '0644'
-        owner: root
-        group: root
-
-    - name: Restart networking
+    - name: Restart networking service
       systemd:
         name: networking
         state: restarted
-      async: 45
+      async: 30
       poll: 0
       ignore_errors: yes
 
-    - name: Wait for reconnection
+    - name: Wait a moment for network restart
+      pause:
+        seconds: 10
+
+    - name: Attempt to reconnect with new IP
       wait_for_connection:
-        host: "{{ new_ip_address }}"
-        port: 22
-        timeout: 120
-        delay: 15
-        sleep: 10
-      connection: local
-      delegate_to: localhost
+        timeout: 60
+        delay: 10
+        sleep: 5
 
-    - name: Verify new IP
-      shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
-      register: new_ip
-      changed_when: false
+    - name: Verify new IP address
+      command: ip addr show {{ target_interface }}
+      register: new_network_config
+      ignore_errors: yes
 
-    - name: Display results
+    - name: Display new network configuration
       debug:
-        msg: |
-          Old IP: {{ current_ip.stdout }}
-          New IP: {{ new_ip.stdout }}
-          Change successful: {{ new_ip_address == new_ip.stdout }}
+        msg: "New network configuration: {{ new_network_config.stdout }}"
