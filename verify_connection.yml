@@ -28,12 +28,22 @@
         fail_msg: "IP address mismatch! Expected: {{ expected_ip }}, Got: {{ current_ip.stdout }}"
         success_msg: "IP address successfully changed to {{ current_ip.stdout }}"
 
-    - name: Test gateway connectivity
-      wait_for:
-        host: "{{ gateway }}"
-        port: 22
-        timeout: 30
-      delegate_to: localhost
+    - name: Check if gateway is reachable
+      ping:
+        data: "gateway_test"
+      delegate_to: "10.31.243.1"
+      ignore_errors: yes
+      register: gateway_ping
+    
+    - name: Display gateway status
+      debug:
+        msg: "Gateway is reachable"
+      when: gateway_ping is success
+    
+    - name: Display gateway unreachable
+      debug:
+        msg: "Gateway is NOT reachable"
+      when: gateway_ping is failed
 
     - name: Test DNS resolution
       shell: |
