@@ -6,6 +6,8 @@
   become_method: sudo
   become_user: root
   vars:
+    ansible_become_timeout: 500
+    ansible_timeout: 500
     target_interface: "{{ target_interface }}"
     expected_ip: "{{ new_ip_address }}"
 
