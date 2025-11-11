@@ -1,7 +1,7 @@
 ---
 - name: Direct network configuration change as root
   hosts: all
-  gather_facts: false
+  gather_facts: true  # Включено для получения ansible_date_time
   become: yes
   become_method: sudo
   become_user: root
@@ -77,4 +77,3 @@
           Old IP: {{ current_ip.stdout }}
           New IP: {{ new_ip.stdout }}
           Configuration: {{ "SUCCESS" if new_ip_address == new_ip.stdout else "FAILED - Manual intervention required" }}
-          
