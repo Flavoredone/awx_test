@@ -1,5 +1,5 @@
 ---
-- name: Verify network configuration
+- name: Verify network configuration after change
   hosts: all
   gather_facts: true
   become: yes
@@ -8,32 +8,49 @@
     expected_ip: "{{ new_ip_address }}"
 
   tasks:
+    - name: Wait for host to be accessible on new IP
+      wait_for_connection:
+        timeout: 120
+        delay: 10
+        sleep: 5
+
     - name: Get current IP address
       shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
       register: current_ip
       changed_when: false
 
-    - name: Verify IP address
-      debug:
-        msg: |
-          NETWORK CONFIGURATION VERIFICATION
-          ==================================
-          Expected IP: {{ expected_ip }}
-          Actual IP: {{ current_ip.stdout }}
-          Status: {{ "SUCCESS" if expected_ip == current_ip.stdout else "FAILED" }}
+    - name: Verify IP address change
+      assert:
+        that:
+          - current_ip.stdout == expected_ip
+        fail_msg: "IP address mismatch! Expected: {{ expected_ip }}, Got: {{ current_ip.stdout }}"
+        success_msg: "IP address successfully changed to {{ current_ip.stdout }}"
 
-    - name: Test network connectivity
+    - name: Test gateway connectivity
       wait_for:
         host: "{{ gateway }}"
         port: 22
         timeout: 30
       delegate_to: localhost
 
-    - name: Verify DNS resolution
-      shell: nslookup google.com
+    - name: Test DNS resolution
+      shell: |
+        nslookup google.com {{ dns_servers.split(',')[0] }}
       register: dns_test
       changed_when: false
+      ignore_errors: yes
 
-    - name: Display DNS test result
+    - name: Display verification results
       debug:
-        var: dns_test.stdout
+        msg: |
+          NETWORK VERIFICATION COMPLETE
+          =============================
+          Expected IP: {{ expected_ip }}
+          Actual IP: {{ current_ip.stdout }}
+          DNS Test: {{ "SUCCESS" if dns_test.rc == 0 else "FAILED" }}
+          Gateway Connectivity: SUCCESS
+
+    - name: Send success notification
+      debug:
+        msg: "Network configuration change completed successfully!"
+      when: current_ip.stdout == expected_ip
