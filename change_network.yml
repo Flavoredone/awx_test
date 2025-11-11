@@ -1,0 +1,57 @@
+---
+- name: Change network configuration
+  hosts: all
+  gather_facts: false
+  vars:
+    target_interface: "{{ target_interface }}"
+    new_ip_address: "{{ new_ip_address }}"
+    mac_address: "{{ mac_address }}"
+    gateway: "{{ gateway }}"
+    subnet_prefix: "{{ subnet_prefix }}"
+    dns_servers: "{{ dns_servers }}"
+    dns_domain: "{{ dns_domain }}"
+  
+  tasks:
+    - name: Create backup of current network configuration
+      copy:
+        src: /etc/network/interfaces
+        dest: /etc/network/interfaces.backup
+        remote_src: yes
+      become: yes
+
+    - name: Create new network configuration
+      blockinfile:
+        path: /etc/network/interfaces
+        block: |
+          # Configuration for {{ target_interface }}
+          auto {{ target_interface }}
+          iface {{ target_interface }} inet static
+            address {{ new_ip_address }}/{{ subnet_prefix }}
+            gateway {{ gateway }}
+            dns-nameservers {{ dns_servers }}
+            dns-search {{ dns_domain }}
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - {{ target_interface }}"
+        backup: yes
+      become: yes
+
+    - name: Apply network configuration
+      command: systemctl restart networking
+      async: 30
+      poll: 0
+      become: yes
+      ignore_errors: yes
+
+    - name: Wait for connection to be reestablished (with timeout)
+      wait_for_connection:
+        timeout: 60
+        sleep: 5
+      delegate_to: localhost
+
+    - name: Verify new IP address
+      command: ip addr show {{ target_interface }}
+      register: ip_output
+      become: yes
+
+    - name: Display new IP configuration
+      debug:
+        msg: "New IP configuration: {{ ip_output.stdout }}"
