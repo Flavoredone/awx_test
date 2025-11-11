@@ -1,0 +1,21 @@
+---
+- name: Verify connection with new IP
+  hosts: all
+  gather_facts: true
+  
+  tasks:
+    - name: Display system information
+      debug:
+        msg: |
+          Hostname: {{ ansible_hostname }}
+          IP Address: {{ ansible_default_ipv4.address }}
+          Connection successful!
+
+    - name: Test network connectivity
+      command: ping -c 3 8.8.8.8
+      register: ping_result
+      become: yes
+
+    - name: Display ping results
+      debug:
+        var: ping_result.stdout
