@@ -28,22 +28,17 @@
         fail_msg: "IP address mismatch! Expected: {{ expected_ip }}, Got: {{ current_ip.stdout }}"
         success_msg: "IP address successfully changed to {{ current_ip.stdout }}"
 
-    - name: Check if gateway is reachable
-      ping:
-        data: "gateway_test"
-      delegate_to: "10.31.243.1"
-      ignore_errors: yes
-      register: gateway_ping
+    - name: Test gateway connectivity with ping
+      shell: ping -c 3 10.31.243.1
+      register: ping_result
+      failed_when: ping_result.rc != 0
+      changed_when: false
     
-    - name: Display gateway status
-      debug:
-        msg: "Gateway is reachable"
-      when: gateway_ping is success
-    
-    - name: Display gateway unreachable
-      debug:
-        msg: "Gateway is NOT reachable"
-      when: gateway_ping is failed
+    - name: Test SSH port with nc
+      shell: nc -z -w 5 10.31.243.1 22
+      register: ssh_port_result
+      failed_when: ssh_port_result.rc != 0
+      changed_when: false
 
     - name: Test DNS resolution
       shell: |
