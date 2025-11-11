@@ -58,22 +58,30 @@
       async: 30
       poll: 0
 
-    - name: Wait for connection recovery
-      wait_for_connection:
-        timeout: 60
-        delay: 10
-        sleep: 5
-
-    - name: Verify new IP address
-      shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
-      register: new_ip
-      changed_when: false
-
-    - name: Display final result
+    - name: Display completion message
       debug:
         msg: |
-          NETWORK CONFIGURATION COMPLETED!
-          ===============================
+          Network configuration applied!
           Old IP: {{ current_ip.stdout }}
-          New IP: {{ new_ip.stdout }}
-          Configuration: {{ "SUCCESS" if new_ip_address == new_ip.stdout else "FAILED - Manual intervention required" }}
+          New IP: {{ new_ip_address }}
+          Please update inventory and run verification playbook.
+          
+    # - name: Wait for connection recovery
+    #   wait_for_connection:
+    #     timeout: 60
+    #     delay: 10
+    #     sleep: 5
+
+    # - name: Verify new IP address
+    #   shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
+    #   register: new_ip
+    #   changed_when: false
+
+    # - name: Display final result
+    #   debug:
+    #     msg: |
+    #       NETWORK CONFIGURATION COMPLETED!
+    #       ===============================
+    #       Old IP: {{ current_ip.stdout }}
+    #       New IP: {{ new_ip.stdout }}
+    #       Configuration: {{ "SUCCESS" if new_ip_address == new_ip.stdout else "FAILED - Manual intervention required" }}
