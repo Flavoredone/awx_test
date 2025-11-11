@@ -25,33 +25,69 @@
     - name: Create backup of current interfaces file in /tmp
       copy:
         src: /etc/network/interfaces
-        dest: "/tmp/interfaces.backup.{{ ansible_date_time.epoch }}"
+        dest: "/tmp/interfaces.backup.before"
         remote_src: yes
         mode: '0644'
 
-    - name: Remove existing configuration for target interface
-      blockinfile:
-        path: /etc/network/interfaces
-        marker: "# {mark} ANSIBLE MANAGED BLOCK {{ target_interface }}"
-        state: absent
+    - name: Read current interfaces file
+      slurp:
+        src: /etc/network/interfaces
+      register: interfaces_content
 
-    - name: Add new network configuration
-      blockinfile:
+    - name: Remove existing configuration for target interface using replace
+      replace:
         path: /etc/network/interfaces
-        block: |
-          auto {{ target_interface }}
-          iface {{ target_interface }} inet static
-            address {{ new_ip_address }}/{{ subnet_prefix }}
-            gateway {{ gateway }}
-            dns-nameservers {{ dns_servers }}
-            dns-search {{ dns_domain }}
-        marker: "# {mark} ANSIBLE MANAGED BLOCK {{ target_interface }}"
-        backup: yes
+        regex: '^auto {{ target_interface }}\niface {{ target_interface }}.*?(?=\n\S|\n*$)'
+        replace: ''
+      when: '"auto " + target_interface in interfaces_content.content | b64decode'
+
+    - name: Add new network configuration using lineinfile
+      block:
+        - name: Ensure auto interface line exists
+          lineinfile:
+            path: /etc/network/interfaces
+            line: "auto {{ target_interface }}"
+            state: present
+
+        - name: Add static IP configuration
+          lineinfile:
+            path: /etc/network/interfaces
+            line: "iface {{ target_interface }} inet static"
+            insertafter: "auto {{ target_interface }}"
+            state: present
+
+        - name: Add IP address
+          lineinfile:
+            path: /etc/network/interfaces
+            line: "  address {{ new_ip_address }}/{{ subnet_prefix }}"
+            insertafter: "iface {{ target_interface }} inet static"
+            state: present
+
+        - name: Add gateway
+          lineinfile:
+            path: /etc/network/interfaces
+            line: "  gateway {{ gateway }}"
+            insertafter: "  address {{ new_ip_address }}/{{ subnet_prefix }}"
+            state: present
+
+        - name: Add DNS servers
+          lineinfile:
+            path: /etc/network/interfaces
+            line: "  dns-nameservers {{ dns_servers }}"
+            insertafter: "  gateway {{ gateway }}"
+            state: present
+
+        - name: Add DNS domain
+          lineinfile:
+            path: /etc/network/interfaces
+            line: "  dns-search {{ dns_domain }}"
+            insertafter: "  dns-nameservers {{ dns_servers }}"
+            state: present
 
     - name: Create manual backup of new configuration in /tmp
       copy:
         src: /etc/network/interfaces
-        dest: "/tmp/interfaces.new.{{ ansible_date_time.epoch }}"
+        dest: "/tmp/interfaces.after"
         remote_src: yes
         mode: '0644'
 
@@ -93,18 +129,10 @@
       delegate_to: localhost
       ignore_errors: yes
 
-    - name: Check if we can connect with new IP
+    - name: Final verification with new IP
       wait_for_connection:
         host: "{{ new_ip_address }}"
         port: 22
         timeout: 30
       connection: local
       delegate_to: localhost
-
-    - name: Verify new IP address
-      command: ip addr show {{ target_interface }}
-      register: new_network_config
-
-    - name: Display new network configuration
-      debug:
-        msg: "New network configuration: {{ new_network_config.stdout }}"
