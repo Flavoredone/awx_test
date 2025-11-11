@@ -1,8 +1,9 @@
 ---
-- name: Safe network configuration change
+- name: Change network configuration
   hosts: all
   gather_facts: true
   become: yes
+  become_method: sudo
   vars:
     target_interface: "{{ target_interface }}"
     new_ip_address: "{{ new_ip_address }}"
@@ -10,20 +11,25 @@
     subnet_prefix: "{{ subnet_prefix }}"
     dns_servers: "{{ dns_servers }}"
     dns_domain: "{{ dns_domain }}"
-
+  
   tasks:
-    - name: Backup current interfaces file
-      command: cp /etc/network/interfaces /etc/network/interfaces.backup.{{ ansible_date_time.epoch }}
-      args:
-        creates: "/etc/network/interfaces.backup.{{ ansible_date_time.epoch }}"
+    - name: Check current network configuration
+      command: ip addr show {{ target_interface }}
+      register: current_network
+      changed_when: false
 
-    - name: Remove existing configuration for target interface
-      blockinfile:
-        path: /etc/network/interfaces
-        marker: "# {mark} ANSIBLE MANAGED BLOCK {{ target_interface }}"
-        state: absent
+    - name: Display current network config
+      debug:
+        var: current_network.stdout
 
-    - name: Add new network configuration
+    - name: Create backup of current network configuration
+      copy:
+        src: /etc/network/interfaces
+        dest: "/tmp/interfaces.backup.{{ ansible_date_time.epoch }}"
+        remote_src: yes
+        mode: '0644'
+
+    - name: Create new network configuration
       blockinfile:
         path: /etc/network/interfaces
         block: |
@@ -35,37 +41,58 @@
             dns-search {{ dns_domain }}
         marker: "# {mark} ANSIBLE MANAGED BLOCK {{ target_interface }}"
         backup: yes
+        backup_dir: /tmp
 
-    - name: Show configuration before applying
+    - name: Show new configuration
       command: cat /etc/network/interfaces
-      register: interfaces_content
+      register: new_config
       changed_when: false
 
-    - name: Display configuration
+    - name: Display new configuration
       debug:
-        var: interfaces_content.stdout
+        var: new_config.stdout
 
-    - name: Apply network configuration
+    - name: Test network configuration syntax
+      command: ifup -n {{ target_interface }}
+      register: config_test
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display configuration test results
+      debug:
+        var: config_test.stdout
+
+    - name: Restart networking service
       systemd:
         name: networking
         state: restarted
-      async: 60
+      async: 30
       poll: 0
+      ignore_errors: yes
 
-    - name: Wait for reconnection with new IP
+    - name: Wait for reconnection with new IP (60 seconds)
       wait_for_connection:
         host: "{{ new_ip_address }}"
         port: 22
-        timeout: 180
-        delay: 15
+        timeout: 60
+        delay: 10
+        sleep: 5
+      connection: local
+      delegate_to: localhost
+      ignore_errors: yes
+
+    - name: Check if we can connect with new IP
+      wait_for_connection:
+        host: "{{ new_ip_address }}"
+        port: 22
+        timeout: 30
       connection: local
       delegate_to: localhost
 
-    - name: Final verification
-      command: hostname -I
-      register: final_ips
-      changed_when: false
+    - name: Verify new IP address
+      command: ip addr show {{ target_interface }}
+      register: new_network_config
 
-    - name: Display final IP addresses
+    - name: Display new network configuration
       debug:
-        msg: "Current IP addresses: {{ final_ips.stdout }}"
+        msg: "New network configuration: {{ new_network_config.stdout }}"
