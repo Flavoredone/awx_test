@@ -26,9 +26,9 @@
         group: root
         mode: '0644'
 
-    - name: Set hostname temporarily
-      hostname:
-        name: "{{ new_hostname }}"
+    - name: Set hostname temporarily (using command)
+      command: hostname "{{ new_hostname }}"
+      changed_when: true
 
     - name: Verify hostname change
       command: hostname
