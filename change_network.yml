@@ -11,17 +11,8 @@
     subnet_prefix: "{{ subnet_prefix }}"
     dns_servers: "{{ dns_servers }}"
     dns_domain: "{{ dns_domain }}"
-  
+
   tasks:
-    - name: Check current network configuration
-      command: ip addr show {{ target_interface }}
-      register: current_network
-      changed_when: false
-
-    - name: Display current network config
-      debug:
-        var: current_network.stdout
-
     - name: Get current IP address
       shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
       register: current_ip
@@ -31,18 +22,15 @@
       debug:
         msg: "Current IP: {{ current_ip.stdout }}"
 
-    - name: Create backup of current interfaces file
+    - name: Create backup
       command: cp /etc/network/interfaces /tmp/interfaces.backup.{{ ansible_date_time.epoch }}
       args:
         creates: "/tmp/interfaces.backup.{{ ansible_date_time.epoch }}"
 
-    - name: Create new interfaces configuration
+    - name: Create new configuration
       copy:
         content: |
-          # Ansible managed - Network configuration
-          # Created: {{ ansible_date_time.iso8601 }}
-          # Old IP: {{ current_ip.stdout }}
-          
+          # Ansible managed
           auto lo
           iface lo inet loopback
 
@@ -55,16 +43,7 @@
         dest: /etc/network/interfaces
         mode: '0644'
 
-    - name: Show new configuration
-      command: cat /etc/network/interfaces
-      register: new_config
-      changed_when: false
-
-    - name: Display new configuration
-      debug:
-        var: new_config.stdout
-
-    - name: Restart networking service
+    - name: Restart networking
       systemd:
         name: networking
         state: restarted
@@ -72,21 +51,17 @@
       poll: 0
       ignore_errors: yes
 
-    - name: Wait a moment for network restart
-      pause:
-        seconds: 10
-
-    - name: Attempt to reconnect with new IP
+    - name: Wait for connection recovery
       wait_for_connection:
-        timeout: 60
-        delay: 10
-        sleep: 5
+        timeout: 90
+        delay: 15
+        sleep: 10
 
-    - name: Verify new IP address
-      command: ip addr show {{ target_interface }}
-      register: new_network_config
-      ignore_errors: yes
+    - name: Verify new IP configuration
+      shell: ip -4 addr show {{ target_interface }} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1
+      register: new_ip
+      changed_when: false
 
-    - name: Display new network configuration
+    - name: Display result
       debug:
-        msg: "New network configuration: {{ new_network_config.stdout }}"
+        msg: "Network configuration changed from {{ current_ip.stdout }} to {{ new_ip.stdout }}"
